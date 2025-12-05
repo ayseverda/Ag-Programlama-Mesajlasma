@@ -1,0 +1,9 @@
+# Secure Web Messaging Agent - Dependencies
+Flask==3.0.0
+Flask-SocketIO==5.3.6
+Flask-Login==0.6.3
+python-socketio==5.10.0
+eventlet==0.35.1
+Werkzeug==3.0.1
+pycryptodome==3.19.1
+

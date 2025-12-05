@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureMSG - Güvenli Mesajlaşma</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+</head>
+<body class="chat-page">
+    <div class="cyber-grid"></div>
+    
+    <div class="chat-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo-mini"></div>
+                <div class="user-info">
+                    <span class="username">{{ username }}</span>
+                    <span class="status online">Çevrimiçi</span>
+                </div>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>
+                    <span class="section-icon">📡</span>
+                    Genel Kanal
+                </h3>
+                <div class="channel-item active" data-channel="broadcast">
+                    <span class="channel-icon">🌐</span>
+                    <span class="channel-name">Broadcast</span>
+                    <span class="unread-badge" id="broadcast-unread" style="display: none;">0</span>
+                </div>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>
+                    <span class="section-icon">👥</span>
+                    Gruplar
+                    <button class="btn-add-group" id="btn-create-group" title="Yeni Grup">+</button>
+                </h3>
+                <div id="groups-list" class="groups-list">
+                    <div class="no-groups" style="color: var(--text-muted); font-size: 0.85rem; padding: 10px;">
+                        Henüz grup yok
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>
+                    <span class="section-icon">👤</span>
+                    Kullanıcılar
+                </h3>
+                <div id="users-list" class="users-list">
+                    <div class="loading-users">
+                        <div class="spinner"></div>
+                        <span>Yükleniyor...</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sidebar-footer">
+                <div class="encryption-status">
+                    <span class="lock-icon">🔒</span>
+                    <span>E2E Şifreli</span>
+                </div>
+                <a href="{{ url_for('logout') }}" class="logout-btn">
+                    <span>Çıkış</span>
+                    <span class="logout-icon">⏻</span>
+                </a>
+            </div>
+        </aside>
+        
+        <!-- Main Chat Area -->
+        <main class="chat-main">
+            <div class="chat-header">
+                <div class="chat-target">
+                    <span class="target-icon" id="target-icon">🌐</span>
+                    <div class="target-info">
+                        <span class="target-name" id="target-name">Broadcast</span>
+                        <span class="target-status" id="target-status">Tüm kullanıcılara mesaj gönder</span>
+                    </div>
+                </div>
+                <div class="chat-actions">
+                    <button class="action-btn" id="btn-history" title="Mesaj Geçmişi">
+                        <span>📜</span>
+                    </button>
+                    <div class="connection-status" id="connection-status">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Bağlanıyor...</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="messages-container" id="messages-container">
+                <div class="messages-list" id="messages-list">
+                    <!-- Messages will be inserted here -->
+                    <div class="welcome-message">
+                        <div class="welcome-icon">🔐</div>
+                        <h2>Güvenli Mesajlaşma</h2>
+                        <p>Tüm mesajlarınız uçtan uca şifrelenir</p>
+                        <p class="welcome-hint">Sol taraftan bir kullanıcı seçin veya genel kanala mesaj gönderin</p>
+                    </div>
+                </div>
+                
+                <div class="typing-indicator" id="typing-indicator" style="display: none;">
+                    <span class="typing-dots">
+                        <span></span><span></span><span></span>
+                    </span>
+                    <span class="typing-text" id="typing-text">Yazıyor...</span>
+                </div>
+            </div>
+            
+            <div class="message-input-container">
+                <form id="message-form" class="message-form">
+                    <div class="input-wrapper">
+                        <input type="text" id="message-input" placeholder="Şifreli mesajınızı yazın..." autocomplete="off">
+                        <div class="input-glow"></div>
+                    </div>
+                    <button type="submit" class="send-btn" id="send-btn">
+                        <span class="send-icon">
+                            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </span>
+                    </button>
+                </form>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Notification Toast -->
+    <div id="toast-container" class="toast-container"></div>
+    
+    <!-- Create Group Modal -->
+    <div id="create-group-modal" class="modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>👥 Yeni Grup Oluştur</h2>
+                <button class="modal-close" id="close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="group-name">
+                        <span class="label-icon">📝</span>
+                        Grup Adı
+                    </label>
+                    <input type="text" id="group-name" placeholder="Grup adını girin..." autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <span class="label-icon">👤</span>
+                        Üyeleri Seçin
+                    </label>
+                    <div id="member-selection" class="member-selection">
+                        <div class="loading-users">
+                            <div class="spinner"></div>
+                            <span>Yükleniyor...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="cancel-create-group">İptal</button>
+                <button class="btn-primary" id="confirm-create-group">Grup Oluştur</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // User data from server
+        const currentUser = {
+            id: {{ user_id }},
+            username: '{{ username }}'
+        };
+    </script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
+

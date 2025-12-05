@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Güvenli Mesajlaşma - Giriş</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body class="auth-page">
+    <div class="cyber-grid"></div>
+    <div class="scan-line"></div>
+    
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="logo-section">
+                <div class="logo-icon">🔒</div>
+                <h1 class="logo-text">Secure<span>MSG</span></h1>
+                <p class="logo-subtitle">Güvenli Mesajlaşma</p>
+            </div>
+            
+            <form method="POST" class="auth-form">
+                <h2>Sistem Girişi</h2>
+                
+                {% if error %}
+                <div class="error-message">
+                    <span class="error-icon">⚠️</span>
+                    {{ error }}
+                </div>
+                {% endif %}
+                
+                <div class="form-group">
+                    <label for="username">
+                        <span class="label-icon">👤</span>
+                        Kullanıcı Adı
+                    </label>
+                    <input type="text" id="username" name="username" required 
+                           placeholder="Kullanıcı adınızı girin" autocomplete="username">
+                    <div class="input-glow"></div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">
+                        <span class="label-icon">🔐</span>
+                        Şifre
+                    </label>
+                    <input type="password" id="password" name="password" required 
+                           placeholder="Şifrenizi girin" autocomplete="current-password">
+                    <div class="input-glow"></div>
+                </div>
+                
+                <button type="submit" class="btn-primary">
+                    <span class="btn-text">Giriş Yap</span>
+                    <span class="btn-icon">→</span>
+                </button>
+            </form>
+            
+            <div class="auth-footer">
+                <p>Hesabınız yok mu? <a href="{{ url_for('register') }}">Kayıt Ol</a></p>
+            </div>
+            
+            <div class="security-badge">
+                <span class="badge-icon">🔒</span>
+                <span>256-bit AES Encryption</span>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Add cyber effect to inputs
+        document.querySelectorAll('input').forEach(input => {
+            input.addEventListener('focus', function() {
+                this.parentElement.classList.add('focused');
+            });
+            input.addEventListener('blur', function() {
+                this.parentElement.classList.remove('focused');
+            });
+        });
+    </script>
+</body>
+</html>
+
