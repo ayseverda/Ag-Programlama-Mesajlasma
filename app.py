@@ -1,7 +1,7 @@
 """
 Secure Web Messaging Agent - Main Application
 Flask + WebSocket server with E2E encryption support
-"""
+p"""
 
 import os
 from datetime import datetime
@@ -10,7 +10,7 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
 import database as db
-from encryption import session_manager, EncryptionManager
+from encryption import SessionManager
 
 # Flask Application Setup
 app = Flask(__name__)
@@ -117,6 +117,8 @@ def register():
     
     return render_template('register.html')
 
+# Initialize encryption system
+session_manager = SessionManager()
 
 @app.route('/chat')
 @login_required
@@ -188,6 +190,7 @@ def handle_connect():
         
         # Generate session encryption key for this connection
         session_key = session_manager.create_session_key(sid)
+
         user_session_keys[sid] = session_key
         
         # Join user's private room
@@ -585,4 +588,5 @@ if __name__ == '__main__':
     
     # Run with eventlet for WebSocket support
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+
 
