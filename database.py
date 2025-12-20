@@ -1,52 +1,161 @@
+import os
+import base64
+import time
 import sqlite3
-import hashlib
+
 from datetime import datetime
-from werkzeug.security import generate_password_hash, check_password_hash
+
+class PasswordHasher:
+    def __init__(self, rounds=2000, salt_bytes=16):
+        self.rounds = rounds
+        self.salt_bytes = salt_bytes
+
+    def generate_salt(self, length=None):
+        if length is None:
+            length = self.salt_bytes
+        return os.urandom(length).hex()
+
+    def _rotate_left(self, x, n, bits=64):
+        return ((x << n) | (x >> (bits - n))) & ((1 << bits) - 1)
+
+    def _rotate_right(self, x, n, bits=64):
+        return ((x >> n) | (x << (bits - n))) & ((1 << bits) - 1)
+
+    def _mix_block(self, val, salt_val):
+        val ^= salt_val
+        val = (val * 0xA5A5A5A5A5A5A5A5) & ((1 << 64) - 1)
+        val = self._rotate_left(val, 13)
+        val ^= (val >> 7)
+        val = self._rotate_right(val, 17)
+        val = (val * 0x9E3779B97F4A7C15) & ((1 << 64) - 1)
+        return val
+
+    def hash(self, password: str, salt: str = None) -> dict:
+        if salt is None:
+            salt = self.generate_salt()
+
+        state = 0
+        for b in password.encode():
+            state = (state * 1315423911 + b) & ((1 << 64) - 1)
+
+        salt_int = int.from_bytes(bytes.fromhex(salt), "big")
+
+        for _ in range(self.rounds):
+            state = self._mix_block(state, salt_int)
+
+        hash_b64 = base64.b64encode(state.to_bytes(8, "big")).decode()
+
+        return {
+            "hash": hash_b64,
+            "salt": salt,
+            "rounds": str(self.rounds)
+        }
+
+    def verify(self, password, hash_value, salt, rounds):
+        original = self.rounds
+        self.rounds = int(rounds)
+
+        try:
+            h2 = self.hash(password, salt)["hash"]
+            result = 0
+            for a, b in zip(h2, hash_value):
+                result |= ord(a) ^ ord(b)
+            return result == 0
+        finally:
+            self.rounds = original
+
+
+password_hasher = PasswordHasher()
+
+# =====================================================
+# 🧾 MESSAGE HASHER (BÜTÜNLÜK İÇİN)
+# =====================================================
+
+class MessageHasher:
+    def __init__(self):
+        self.fnv_prime = 0x100000001b3
+        self.fnv_offset = 0xcbf29ce484222325
+
+    def _fnv1a(self, data):
+        h = self.fnv_offset
+        for b in data:
+            h ^= b
+            h = (h * self.fnv_prime) & 0xFFFFFFFFFFFFFFFF
+        return h
+
+    def _djb2(self, data):
+        h = 5381
+        for b in data:
+            h = ((h << 5) + h + b) & 0xFFFFFFFF
+        return h
+
+    def generate(self, content, sender_id, timestamp=None):
+        if timestamp is None:
+            timestamp = str(time.time())
+
+        data = f"{content}|{sender_id}|{timestamp}".encode()
+        h1 = self._fnv1a(data)
+        h2 = self._djb2(data)
+
+        combined = (h1 ^ (h2 << 32)) & 0xFFFFFFFFFFFFFFFF
+        return format(combined, "016x")
+
+
+message_hasher = MessageHasher()
+
+
+
+
+
+
+
 
 DATABASE_NAME = "messaging.db"
 
 
 def get_db_connection():
+    """Create and return a database connection"""
     conn = sqlite3.connect(DATABASE_NAME)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db():
+    """Initialize the database with required tables"""
     conn = get_db_connection()
-    cursor = conn.cursor()
+    c = conn.cursor()
     
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            is_online INTEGER DEFAULT 0,
-            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    cursor.execute('''
+    # Users table - stores credentials and online status
+    c.execute("""
+      CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE,
+    password_hash TEXT,
+    salt TEXT,
+    rounds TEXT,
+    is_online INTEGER DEFAULT 0,
+    last_seen TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
+
+    c.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender_id INTEGER NOT NULL,
+            sender_id INTEGER,
             receiver_id INTEGER,
             group_id INTEGER,
-            encrypted_content TEXT NOT NULL,
-            content_hash TEXT NOT NULL,
+            encrypted_content TEXT,
+            message_hash TEXT,
             is_broadcast INTEGER DEFAULT 0,
             is_group INTEGER DEFAULT 0,
-            is_delivered INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            delivered_at TIMESTAMP,
-            FOREIGN KEY (sender_id) REFERENCES users(id),
-            FOREIGN KEY (receiver_id) REFERENCES users(id),
-            FOREIGN KEY (group_id) REFERENCES groups(id)
+           is_delivered INTEGER DEFAULT 0,
+           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+           delivered_at TIMESTAMP
         )
-    ''')
+    """)
     
-    cursor.execute('''
+    # Groups table - stores group information
+    c.execute('''
         CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -55,8 +164,8 @@ def init_db():
             FOREIGN KEY (creator_id) REFERENCES users(id)
         )
     ''')
-    
-    cursor.execute('''
+    # Group members table - stores group membership
+    c.execute('''
         CREATE TABLE IF NOT EXISTS group_members (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             group_id INTEGER NOT NULL,
@@ -68,6 +177,7 @@ def init_db():
         )
     ''')
     
+
     conn.commit()
     conn.close()
     print("✅ Database initialized successfully!")
@@ -78,38 +188,70 @@ def create_user(username: str, password: str) -> dict:
     cursor = conn.cursor()
     
     try:
-        password_hash = generate_password_hash(password)
+        password_data = password_hasher.hash(password)
+
         cursor.execute(
-            'INSERT INTO users (username, password_hash) VALUES (?, ?)',
-            (username, password_hash)
+            '''
+            INSERT INTO users (username, password_hash, salt, rounds)
+            VALUES (?, ?, ?, ?)
+            ''',
+            (
+                username,
+                password_data["hash"],
+                password_data["salt"],
+                password_data["rounds"]
+            )
         )
         conn.commit()
         user_id = cursor.lastrowid
-        return {"success": True, "user_id": user_id, "username": username}
-    except sqlite3.IntegrityError:
-        return {"success": False, "error": "Username already exists"}
+
+        return {
+            "success": True,
+            "user_id": user_id,
+            "username": username
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
     finally:
         conn.close()
+
 
 
 def authenticate_user(username: str, password: str) -> dict:
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
+
+    cursor.execute(
+        'SELECT * FROM users WHERE username = ?',
+        (username,)
+    )
     user = cursor.fetchone()
     conn.close()
-    
-    if user and check_password_hash(user['password_hash'], password):
-        return {
-            "success": True,
-            "user_id": user['id'],
-            "username": user['username']
-        }
-    return {"success": False, "error": "Invalid username or password"}
+
+    if not user:
+        return {"success": False, "error": "Kullanıcı bulunamadı"}
+
+    if not password_hasher.verify(
+        password,
+        user["password_hash"],
+        user["salt"],
+        user["rounds"]
+    ):
+        return {"success": False, "error": "Şifre hatalı"}
+
+    return {
+        "success": True,
+        "user_id": user["id"],
+        "username": user["username"]
+    }
 
 
 def set_user_online(user_id: int, is_online: bool = True):
+    """Update user's online status"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -122,6 +264,7 @@ def set_user_online(user_id: int, is_online: bool = True):
 
 
 def get_online_users() -> list:
+    """Get list of all online users"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -132,6 +275,7 @@ def get_online_users() -> list:
 
 
 def get_all_users() -> list:
+    """Get list of all registered users"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -143,6 +287,7 @@ def get_all_users() -> list:
 
 
 def get_user_by_id(user_id: int) -> dict:
+    """Get user information by ID"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -156,6 +301,7 @@ def get_user_by_id(user_id: int) -> dict:
 
 
 def get_user_by_username(username: str) -> dict:
+    """Get user information by username"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -168,90 +314,96 @@ def get_user_by_username(username: str) -> dict:
     return None
 
 
-def calculate_message_hash(content: str) -> str:
-    return hashlib.sha256(content.encode('utf-8')).hexdigest()
 
 
-def save_message(sender_id: int, receiver_id: int, encrypted_content: str, 
-                 is_broadcast: bool = False, is_delivered: bool = False) -> int:
+
+def save_message(sender_id, receiver_id, encrypted_content, is_broadcast, is_delivered):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    content_hash = calculate_message_hash(encrypted_content)
-    
-    cursor.execute('''
-        INSERT INTO messages 
-        (sender_id, receiver_id, encrypted_content, content_hash, is_broadcast, is_delivered)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (sender_id, receiver_id, encrypted_content, content_hash, 
-          1 if is_broadcast else 0, 1 if is_delivered else 0))
-    
+
+    msg_hash = message_hasher.generate(
+        encrypted_content,
+        sender_id
+    )
+
+    cursor.execute("""
+        INSERT INTO messages
+        (sender_id, receiver_id, encrypted_content, message_hash,
+         is_broadcast, is_group, is_delivered)
+        VALUES (?, ?, ?, ?, ?, 0, ?)
+    """, (
+        sender_id,
+        receiver_id,
+        encrypted_content,
+        msg_hash,
+        int(is_broadcast),
+        int(is_delivered)
+    ))
+
     conn.commit()
     message_id = cursor.lastrowid
     conn.close()
     return message_id
 
-
 def get_undelivered_messages(user_id: int) -> list:
+    """Get undelivered messages - direct ve broadcast mesajları"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT m.*, u.username as sender_username
+
+    # Direct mesajlar (receiver_id = user_id) ve broadcast mesajlar (receiver_id IS NULL)
+    # Kullanıcı mesajı gönderdiğinde (sender_id = user_id) hariç
+    cursor.execute("""
+        SELECT m.id, m.sender_id, u.username AS sender_username,
+               m.encrypted_content, m.message_hash,
+               m.is_broadcast, m.created_at
         FROM messages m
         JOIN users u ON m.sender_id = u.id
-        WHERE (m.receiver_id = ? OR m.is_broadcast = 1) 
-        AND m.is_delivered = 0
-        AND m.sender_id != ?
+        WHERE m.sender_id != ?
+          AND (
+              (m.receiver_id = ? AND m.is_broadcast = 0)
+              OR
+              (m.is_broadcast = 1 AND m.receiver_id IS NULL)
+          )
+          AND m.is_delivered = 0
         ORDER BY m.created_at ASC
-    ''', (user_id, user_id))
-    
-    messages = []
-    for row in cursor.fetchall():
-        messages.append({
-            "id": row['id'],
-            "sender_id": row['sender_id'],
-            "sender_username": row['sender_username'],
-            "encrypted_content": row['encrypted_content'],
-            "content_hash": row['content_hash'],
-            "is_broadcast": bool(row['is_broadcast']),
-            "created_at": row['created_at']
-        })
-    
+    """, (user_id, user_id))
+
+    rows = cursor.fetchall()
     conn.close()
-    return messages
+
+    return [dict(row) for row in rows]
 
 
 def mark_messages_delivered(message_ids: list):
     if not message_ids:
         return
-    
+
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     placeholders = ','.join('?' * len(message_ids))
-    cursor.execute(f'''
-        UPDATE messages 
-        SET is_delivered = 1, delivered_at = ? 
+    cursor.execute(f"""
+        UPDATE messages
+        SET is_delivered = 1,
+            delivered_at = ?
         WHERE id IN ({placeholders})
-    ''', [datetime.now()] + message_ids)
+    """, [datetime.now()] + message_ids)
+
     
     conn.commit()
     conn.close()
 
-
-def get_message_history(user_id: int, other_user_id: int = None, limit: int = 50) -> list:
+def get_message_history(user_id: int, other_user_id: int = None, limit=50):
+    """Get message history - other_user_id NULL ise broadcast, değilse direct"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     if other_user_id:
+        # Direct mesaj geçmişi (iki kullanıcı arası)
         cursor.execute('''
-            SELECT m.*, 
-                   s.username as sender_username,
-                   r.username as receiver_username
+            SELECT m.*, u.username as sender_username
             FROM messages m
-            JOIN users s ON m.sender_id = s.id
-            LEFT JOIN users r ON m.receiver_id = r.id
+            JOIN users u ON m.sender_id = u.id
             WHERE m.is_broadcast = 0 
               AND m.is_group = 0
               AND ((m.sender_id = ? AND m.receiver_id = ?)
@@ -260,66 +412,85 @@ def get_message_history(user_id: int, other_user_id: int = None, limit: int = 50
             LIMIT ?
         ''', (user_id, other_user_id, other_user_id, user_id, limit))
     else:
+        # Broadcast mesaj geçmişi (receiver_id NULL olanlar)
         cursor.execute('''
-            SELECT m.*, 
-                   s.username as sender_username,
-                   r.username as receiver_username
+            SELECT m.*, u.username as sender_username
             FROM messages m
-            JOIN users s ON m.sender_id = s.id
-            LEFT JOIN users r ON m.receiver_id = r.id
-            WHERE m.is_broadcast = 1
+            JOIN users u ON m.sender_id = u.id
+            WHERE m.is_broadcast = 1 
+              AND m.receiver_id IS NULL
             ORDER BY m.created_at DESC
             LIMIT ?
         ''', (limit,))
+
+    rows = cursor.fetchall()
+    conn.close()
     
+    # Row objelerini dict'e çevir
     messages = []
-    for row in cursor.fetchall():
+    for row in rows:
         messages.append({
             "id": row['id'],
             "sender_id": row['sender_id'],
             "sender_username": row['sender_username'],
             "receiver_id": row['receiver_id'],
-            "receiver_username": row['receiver_username'],
             "encrypted_content": row['encrypted_content'],
-            "content_hash": row['content_hash'],
+            "message_hash": row['message_hash'],
             "is_broadcast": bool(row['is_broadcast']),
             "created_at": row['created_at']
         })
     
-    conn.close()
-    return list(reversed(messages))
+    return list(reversed(messages))  # Eski -> Yeni sıralama
 
 
 def verify_message_integrity(message_id: int) -> bool:
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT encrypted_content, message_hash, sender_id, created_at
+        FROM messages
+        WHERE id = ?
+    """, (message_id,))
     
-    cursor.execute('SELECT encrypted_content, content_hash FROM messages WHERE id = ?', (message_id,))
     row = cursor.fetchone()
     conn.close()
-    
-    if row:
-        calculated_hash = calculate_message_hash(row['encrypted_content'])
-        return calculated_hash == row['content_hash']
-    return False
 
+    if not row:
+        return False
+
+    recalculated = message_hasher.generate(
+        row["encrypted_content"],
+        row["sender_id"],
+        row["created_at"]
+    )
+
+    return recalculated == row["message_hash"]
+
+
+
+# ============== GROUP FUNCTIONS ==============
 
 def create_group(name: str, creator_id: int, member_ids: list) -> dict:
+    """Create a new group with specified members"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
+        # Create the group
         cursor.execute(
             'INSERT INTO groups (name, creator_id) VALUES (?, ?)',
             (name, creator_id)
         )
         group_id = cursor.lastrowid
         
+        # Add creator as a member
         cursor.execute(
             'INSERT INTO group_members (group_id, user_id) VALUES (?, ?)',
             (group_id, creator_id)
         )
         
+        # Add other members
         for member_id in member_ids:
             if member_id != creator_id:
                 cursor.execute(
@@ -337,6 +508,7 @@ def create_group(name: str, creator_id: int, member_ids: list) -> dict:
 
 
 def get_user_groups(user_id: int) -> list:
+    """Get all groups a user belongs to"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -364,6 +536,7 @@ def get_user_groups(user_id: int) -> list:
 
 
 def get_group_by_id(group_id: int) -> dict:
+    """Get group information by ID"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -382,6 +555,7 @@ def get_group_by_id(group_id: int) -> dict:
 
 
 def get_group_members(group_id: int) -> list:
+    """Get all members of a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -405,6 +579,7 @@ def get_group_members(group_id: int) -> list:
 
 
 def is_group_member(group_id: int, user_id: int) -> bool:
+    """Check if a user is a member of a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -418,6 +593,7 @@ def is_group_member(group_id: int, user_id: int) -> bool:
 
 
 def add_group_member(group_id: int, user_id: int) -> bool:
+    """Add a user to a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -435,6 +611,7 @@ def add_group_member(group_id: int, user_id: int) -> bool:
 
 
 def remove_group_member(group_id: int, user_id: int) -> bool:
+    """Remove a user from a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -447,25 +624,60 @@ def remove_group_member(group_id: int, user_id: int) -> bool:
     return True
 
 
-def save_group_message(sender_id: int, group_id: int, encrypted_content: str) -> int:
+def save_group_message(sender_id, group_id, encrypted_content):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    content_hash = calculate_message_hash(encrypted_content)
-    
-    cursor.execute('''
-        INSERT INTO messages 
-        (sender_id, group_id, encrypted_content, content_hash, is_group, is_delivered)
-        VALUES (?, ?, ?, ?, 1, 0)
-    ''', (sender_id, group_id, encrypted_content, content_hash))
-    
+
+    created_at = datetime.now().isoformat()
+
+    msg_hash = message_hasher.generate(
+        encrypted_content,
+        sender_id,
+        created_at
+    )
+
+    cursor.execute("""
+        INSERT INTO messages
+        (sender_id, receiver_id, group_id, encrypted_content,
+         message_hash, is_group, is_broadcast, is_delivered, created_at)
+        VALUES (?, NULL, ?, ?, ?, 1, 0, 0, ?)
+    """, (
+        sender_id,
+        group_id,
+        encrypted_content,
+        msg_hash,
+        created_at
+    ))
+
     conn.commit()
     message_id = cursor.lastrowid
     conn.close()
     return message_id
+def save_broadcast_message(sender_id: int, encrypted_content: str):
+    """Save broadcast message - tek bir kayıt olarak (receiver_id=NULL)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    created_at = datetime.now().isoformat()
+    msg_hash = message_hasher.generate(encrypted_content, sender_id, created_at)
+
+    cursor.execute("""
+        INSERT INTO messages
+        (sender_id, receiver_id, encrypted_content, message_hash,
+         is_broadcast, is_group, is_delivered, created_at)
+        VALUES (?, NULL, ?, ?, 1, 0, 0, ?)
+    """, (sender_id, encrypted_content, msg_hash, created_at))
+
+    conn.commit()
+    message_id = cursor.lastrowid
+    conn.close()
+
+    return message_id
+    
 
 
 def get_group_message_history(group_id: int, limit: int = 50) -> list:
+    """Get message history for a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -486,7 +698,7 @@ def get_group_message_history(group_id: int, limit: int = 50) -> list:
             "sender_username": row['sender_username'],
             "group_id": row['group_id'],
             "encrypted_content": row['encrypted_content'],
-            "content_hash": row['content_hash'],
+            "message_hash": row['message_hash'],
             "created_at": row['created_at']
         })
     
@@ -494,42 +706,8 @@ def get_group_message_history(group_id: int, limit: int = 50) -> list:
     return list(reversed(messages))
 
 
-def get_undelivered_group_messages(user_id: int) -> list:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT m.*, u.username as sender_username, g.name as group_name
-        FROM messages m
-        JOIN users u ON m.sender_id = u.id
-        JOIN groups g ON m.group_id = g.id
-        JOIN group_members gm ON m.group_id = gm.group_id
-        WHERE gm.user_id = ? 
-        AND m.is_group = 1 
-        AND m.sender_id != ?
-        AND m.created_at > (
-            SELECT COALESCE(MAX(delivered_at), '1970-01-01') 
-            FROM messages 
-            WHERE group_id = m.group_id AND is_group = 1
-        )
-        ORDER BY m.created_at ASC
-    ''', (user_id, user_id))
-    
-    messages = []
-    for row in cursor.fetchall():
-        messages.append({
-            "id": row['id'],
-            "sender_id": row['sender_id'],
-            "sender_username": row['sender_username'],
-            "group_id": row['group_id'],
-            "group_name": row['group_name'],
-            "encrypted_content": row['encrypted_content'],
-            "created_at": row['created_at']
-        })
-    
-    conn.close()
-    return messages
 
+
+# Initialize database when module is imported
 if __name__ == "__main__":
     init_db()
-
