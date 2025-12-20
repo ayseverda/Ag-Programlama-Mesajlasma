@@ -251,29 +251,32 @@ def handle_disconnect():
         print(f"❌ User {current_user.username} disconnected (sid: {sid})")
 
 
-
 @socketio.on('send_message')
 def handle_send_message(data):
+    """Handle sending a message"""
     if not current_user.is_authenticated:
         return
-
+    
     sender_id = current_user.id
+    receiver_id = data.get('receiver_id')
     encrypted_content = data.get('encrypted_content')
     is_broadcast = data.get('is_broadcast', False)
-
+    
     if not encrypted_content:
         emit('error', {'message': 'Mesaj içeriği boş olamaz!'})
         return
-
+    
+    # For storage, we re-encrypt with master key
     storage_encrypted = session_manager.encrypt_for_storage(encrypted_content)
-
-    # 📢 BROADCAST
+    
+    # Check if receiver is online for direct delivery
+    is_delivered = False
+    
     if is_broadcast:
-        db.save_broadcast_message(
-            sender_id=sender_id,
-            encrypted_content=storage_encrypted
-        )
-
+        # Broadcast message to all online users
+        receiver_id = None
+        is_delivered = len(active_connections) > 1  # At least one other user
+        
         emit('new_message', {
             'sender_id': sender_id,
             'sender_username': current_user.username,
@@ -281,15 +284,36 @@ def handle_send_message(data):
             'is_broadcast': True,
             'timestamp': datetime.now().isoformat()
         }, room='broadcast', include_self=False)
-
-        emit('message_sent', {
-            'is_broadcast': True,
-            'is_delivered': True
-        })
-
-        print(f"📢 Broadcast from {current_user.username}")
-        return
-
+        
+    else:
+        # Direct message to specific user
+        if receiver_id and receiver_id in active_connections:
+            is_delivered = True
+            emit('new_message', {
+                'sender_id': sender_id,
+                'sender_username': current_user.username,
+                'encrypted_content': encrypted_content,
+                'is_broadcast': False,
+                'timestamp': datetime.now().isoformat()
+            }, room=f'user_{receiver_id}')
+    
+    # Save message to database
+    message_id = db.save_message(
+        sender_id=sender_id,
+        receiver_id=receiver_id,
+        encrypted_content=storage_encrypted,
+        is_broadcast=is_broadcast,
+        is_delivered=is_delivered
+    )
+    
+    # Confirm to sender
+    emit('message_sent', {
+        'message_id': message_id,
+        'receiver_id': receiver_id,
+        'is_delivered': is_delivered
+    })
+    
+    print(f"📤 Message from {current_user.username} -> {'broadcast' if is_broadcast else receiver_id}")
 
 
 @socketio.on('get_history')
@@ -564,6 +588,5 @@ if __name__ == '__main__':
     
     # Run with eventlet for WebSocket support
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)
-
 
 

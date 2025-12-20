@@ -2,117 +2,11 @@
 SQLite Database Module for Secure Messaging Application
 Handles user credentials, message history, and online status
 """
-import os
-import base64
-import time
+
 import sqlite3
-
+import hashlib
 from datetime import datetime
-
-class PasswordHasher:
-    def __init__(self, rounds=2000, salt_bytes=16):
-        self.rounds = rounds
-        self.salt_bytes = salt_bytes
-
-    def generate_salt(self, length=None):
-        if length is None:
-            length = self.salt_bytes
-        return os.urandom(length).hex()
-
-    def _rotate_left(self, x, n, bits=64):
-        return ((x << n) | (x >> (bits - n))) & ((1 << bits) - 1)
-
-    def _rotate_right(self, x, n, bits=64):
-        return ((x >> n) | (x << (bits - n))) & ((1 << bits) - 1)
-
-    def _mix_block(self, val, salt_val):
-        val ^= salt_val
-        val = (val * 0xA5A5A5A5A5A5A5A5) & ((1 << 64) - 1)
-        val = self._rotate_left(val, 13)
-        val ^= (val >> 7)
-        val = self._rotate_right(val, 17)
-        val = (val * 0x9E3779B97F4A7C15) & ((1 << 64) - 1)
-        return val
-
-    def hash(self, password: str, salt: str = None) -> dict:
-        if salt is None:
-            salt = self.generate_salt()
-
-        state = 0
-        for b in password.encode():
-            state = (state * 1315423911 + b) & ((1 << 64) - 1)
-
-        salt_int = int.from_bytes(bytes.fromhex(salt), "big")
-
-        for _ in range(self.rounds):
-            state = self._mix_block(state, salt_int)
-
-        hash_b64 = base64.b64encode(state.to_bytes(8, "big")).decode()
-
-        return {
-            "hash": hash_b64,
-            "salt": salt,
-            "rounds": str(self.rounds)
-        }
-
-    def verify(self, password, hash_value, salt, rounds):
-        original = self.rounds
-        self.rounds = int(rounds)
-
-        try:
-            h2 = self.hash(password, salt)["hash"]
-            result = 0
-            for a, b in zip(h2, hash_value):
-                result |= ord(a) ^ ord(b)
-            return result == 0
-        finally:
-            self.rounds = original
-
-
-password_hasher = PasswordHasher()
-
-# =====================================================
-# 🧾 MESSAGE HASHER (BÜTÜNLÜK İÇİN)
-# =====================================================
-
-class MessageHasher:
-    def __init__(self):
-        self.fnv_prime = 0x100000001b3
-        self.fnv_offset = 0xcbf29ce484222325
-
-    def _fnv1a(self, data):
-        h = self.fnv_offset
-        for b in data:
-            h ^= b
-            h = (h * self.fnv_prime) & 0xFFFFFFFFFFFFFFFF
-        return h
-
-    def _djb2(self, data):
-        h = 5381
-        for b in data:
-            h = ((h << 5) + h + b) & 0xFFFFFFFF
-        return h
-
-    def generate(self, content, sender_id, timestamp=None):
-        if timestamp is None:
-            timestamp = str(time.time())
-
-        data = f"{content}|{sender_id}|{timestamp}".encode()
-        h1 = self._fnv1a(data)
-        h2 = self._djb2(data)
-
-        combined = (h1 ^ (h2 << 32)) & 0xFFFFFFFFFFFFFFFF
-        return format(combined, "016x")
-
-
-message_hasher = MessageHasher()
-
-
-
-
-
-
-
+from werkzeug.security import generate_password_hash, check_password_hash
 
 DATABASE_NAME = "messaging.db"
 
@@ -127,39 +21,42 @@ def get_db_connection():
 def init_db():
     """Initialize the database with required tables"""
     conn = get_db_connection()
-    c = conn.cursor()
+    cursor = conn.cursor()
     
     # Users table - stores credentials and online status
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE,
-    password_hash TEXT,
-    salt TEXT,
-    rounds TEXT,
-    is_online INTEGER DEFAULT 0,
-    last_seen TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )""")
-
-    c.execute("""
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            is_online INTEGER DEFAULT 0,
+            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Messages table - stores encrypted messages with hash for integrity
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender_id INTEGER,
+            sender_id INTEGER NOT NULL,
             receiver_id INTEGER,
             group_id INTEGER,
-            encrypted_content TEXT,
-            message_hash TEXT,
+            encrypted_content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
             is_broadcast INTEGER DEFAULT 0,
             is_group INTEGER DEFAULT 0,
-           is_delivered INTEGER DEFAULT 0,
-           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-           delivered_at TIMESTAMP
+            is_delivered INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            delivered_at TIMESTAMP,
+            FOREIGN KEY (sender_id) REFERENCES users(id),
+            FOREIGN KEY (receiver_id) REFERENCES users(id),
+            FOREIGN KEY (group_id) REFERENCES groups(id)
         )
-    """)
+    ''')
     
     # Groups table - stores group information
-    c.execute('''
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -168,8 +65,9 @@ def init_db():
             FOREIGN KEY (creator_id) REFERENCES users(id)
         )
     ''')
+    
     # Group members table - stores group membership
-    c.execute('''
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS group_members (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             group_id INTEGER NOT NULL,
@@ -181,77 +79,47 @@ def init_db():
         )
     ''')
     
-
     conn.commit()
     conn.close()
     print("✅ Database initialized successfully!")
 
 
 def create_user(username: str, password: str) -> dict:
+    """Create a new user account"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        password_data = password_hasher.hash(password)
-
+        password_hash = generate_password_hash(password)
         cursor.execute(
-            '''
-            INSERT INTO users (username, password_hash, salt, rounds)
-            VALUES (?, ?, ?, ?)
-            ''',
-            (
-                username,
-                password_data["hash"],
-                password_data["salt"],
-                password_data["rounds"]
-            )
+            'INSERT INTO users (username, password_hash) VALUES (?, ?)',
+            (username, password_hash)
         )
         conn.commit()
         user_id = cursor.lastrowid
-
-        return {
-            "success": True,
-            "user_id": user_id,
-            "username": username
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": True, "user_id": user_id, "username": username}
+    except sqlite3.IntegrityError:
+        return {"success": False, "error": "Username already exists"}
     finally:
         conn.close()
 
 
-
 def authenticate_user(username: str, password: str) -> dict:
+    """Authenticate user with username and password"""
     conn = get_db_connection()
     cursor = conn.cursor()
-
-    cursor.execute(
-        'SELECT * FROM users WHERE username = ?',
-        (username,)
-    )
+    
+    cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
     user = cursor.fetchone()
     conn.close()
-
-    if not user:
-        return {"success": False, "error": "Kullanıcı bulunamadı"}
-
-    if not password_hasher.verify(
-        password,
-        user["password_hash"],
-        user["salt"],
-        user["rounds"]
-    ):
-        return {"success": False, "error": "Şifre hatalı"}
-
-    return {
-        "success": True,
-        "user_id": user["id"],
-        "username": user["username"]
-    }
+    
+    if user and check_password_hash(user['password_hash'], password):
+        return {
+            "success": True,
+            "user_id": user['id'],
+            "username": user['username']
+        }
+    return {"success": False, "error": "Invalid username or password"}
 
 
 def set_user_online(user_id: int, is_online: bool = True):
@@ -318,124 +186,148 @@ def get_user_by_username(username: str) -> dict:
     return None
 
 
+def calculate_message_hash(content: str) -> str:
+    """Calculate SHA-256 hash of message content for integrity verification"""
+    return hashlib.sha256(content.encode('utf-8')).hexdigest()
 
 
-
-def save_message(sender_id, receiver_id, encrypted_content, is_broadcast, is_delivered):
+def save_message(sender_id: int, receiver_id: int, encrypted_content: str, 
+                 is_broadcast: bool = False, is_delivered: bool = False) -> int:
+    """Save an encrypted message to the database"""
     conn = get_db_connection()
     cursor = conn.cursor()
-
-    msg_hash = message_hasher.generate(
-        encrypted_content,
-        sender_id
-    )
-
-    cursor.execute("""
-        INSERT INTO messages
-        (sender_id, receiver_id, encrypted_content, message_hash,
-         is_broadcast, is_group, is_delivered)
-        VALUES (?, ?, ?, ?, ?, 0, ?)
-    """, (
-        sender_id,
-        receiver_id,
-        encrypted_content,
-        msg_hash,
-        int(is_broadcast),
-        int(is_delivered)
-    ))
-
+    
+    content_hash = calculate_message_hash(encrypted_content)
+    
+    cursor.execute('''
+        INSERT INTO messages 
+        (sender_id, receiver_id, encrypted_content, content_hash, is_broadcast, is_delivered)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (sender_id, receiver_id, encrypted_content, content_hash, 
+          1 if is_broadcast else 0, 1 if is_delivered else 0))
+    
     conn.commit()
     message_id = cursor.lastrowid
     conn.close()
     return message_id
 
+
 def get_undelivered_messages(user_id: int) -> list:
+    """Get all undelivered messages for a user"""
     conn = get_db_connection()
     cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT m.id, m.sender_id, u.username AS sender_username,
-               m.encrypted_content, m.message_hash,
-               m.is_broadcast, m.created_at
-        FROM messages m
-        JOIN users u ON m.sender_id = u.id
-        WHERE m.receiver_id = ?
-          AND m.is_delivered = 0
-        ORDER BY m.created_at ASC
-    """, (user_id,))
-
-    rows = cursor.fetchall()
-    conn.close()
-
-    return [dict(row) for row in rows]
-
-
-def mark_messages_delivered(message_ids: list):
-    if not message_ids:
-        return
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    placeholders = ','.join('?' * len(message_ids))
-    cursor.execute(f"""
-        UPDATE messages
-        SET is_delivered = 1,
-            delivered_at = ?
-        WHERE id IN ({placeholders})
-    """, [datetime.now()] + message_ids)
-
     
-    conn.commit()
-    conn.close()
-
-def get_message_history(user_id: int, other_user_id: int = None, limit=50):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
     cursor.execute('''
         SELECT m.*, u.username as sender_username
         FROM messages m
         JOIN users u ON m.sender_id = u.id
-        WHERE 
-            (m.sender_id = ? AND m.receiver_id = ?)
-            OR
-            (m.sender_id = ? AND m.receiver_id = ?)
-            OR
-            (m.is_broadcast = 1 AND m.receiver_id = ?)
-        ORDER BY m.created_at DESC
-        LIMIT ?
-    ''', (user_id, other_user_id, other_user_id, user_id, user_id, limit))
-
-    rows = cursor.fetchall()
+        WHERE (m.receiver_id = ? OR m.is_broadcast = 1) 
+        AND m.is_delivered = 0
+        AND m.sender_id != ?
+        ORDER BY m.created_at ASC
+    ''', (user_id, user_id))
+    
+    messages = []
+    for row in cursor.fetchall():
+        messages.append({
+            "id": row['id'],
+            "sender_id": row['sender_id'],
+            "sender_username": row['sender_username'],
+            "encrypted_content": row['encrypted_content'],
+            "content_hash": row['content_hash'],
+            "is_broadcast": bool(row['is_broadcast']),
+            "created_at": row['created_at']
+        })
+    
     conn.close()
-    return rows
+    return messages
+
+
+def mark_messages_delivered(message_ids: list):
+    """Mark messages as delivered"""
+    if not message_ids:
+        return
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    placeholders = ','.join('?' * len(message_ids))
+    cursor.execute(f'''
+        UPDATE messages 
+        SET is_delivered = 1, delivered_at = ? 
+        WHERE id IN ({placeholders})
+    ''', [datetime.now()] + message_ids)
+    
+    conn.commit()
+    conn.close()
+
+
+def get_message_history(user_id: int, other_user_id: int = None, limit: int = 50) -> list:
+    """Get message history for a user (with a specific user or broadcast)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    if other_user_id:
+        # Direct messages between two users (exclude broadcast messages)
+        cursor.execute('''
+            SELECT m.*, 
+                   s.username as sender_username,
+                   r.username as receiver_username
+            FROM messages m
+            JOIN users s ON m.sender_id = s.id
+            LEFT JOIN users r ON m.receiver_id = r.id
+            WHERE m.is_broadcast = 0 
+              AND m.is_group = 0
+              AND ((m.sender_id = ? AND m.receiver_id = ?)
+                   OR (m.sender_id = ? AND m.receiver_id = ?))
+            ORDER BY m.created_at DESC
+            LIMIT ?
+        ''', (user_id, other_user_id, other_user_id, user_id, limit))
+    else:
+        # Broadcast messages only
+        cursor.execute('''
+            SELECT m.*, 
+                   s.username as sender_username,
+                   r.username as receiver_username
+            FROM messages m
+            JOIN users s ON m.sender_id = s.id
+            LEFT JOIN users r ON m.receiver_id = r.id
+            WHERE m.is_broadcast = 1
+            ORDER BY m.created_at DESC
+            LIMIT ?
+        ''', (limit,))
+    
+    messages = []
+    for row in cursor.fetchall():
+        messages.append({
+            "id": row['id'],
+            "sender_id": row['sender_id'],
+            "sender_username": row['sender_username'],
+            "receiver_id": row['receiver_id'],
+            "receiver_username": row['receiver_username'],
+            "encrypted_content": row['encrypted_content'],
+            "content_hash": row['content_hash'],
+            "is_broadcast": bool(row['is_broadcast']),
+            "created_at": row['created_at']
+        })
+    
+    conn.close()
+    return list(reversed(messages))
 
 
 def verify_message_integrity(message_id: int) -> bool:
+    """Verify message integrity by comparing stored hash with calculated hash"""
     conn = get_db_connection()
     cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT encrypted_content, message_hash, sender_id, created_at
-        FROM messages
-        WHERE id = ?
-    """, (message_id,))
     
+    cursor.execute('SELECT encrypted_content, content_hash FROM messages WHERE id = ?', (message_id,))
     row = cursor.fetchone()
     conn.close()
-
-    if not row:
-        return False
-
-    recalculated = message_hasher.generate(
-        row["encrypted_content"],
-        row["sender_id"],
-        row["created_at"]
-    )
-
-    return recalculated == row["message_hash"]
-
+    
+    if row:
+        calculated_hash = calculate_message_hash(row['encrypted_content'])
+        return calculated_hash == row['content_hash']
+    return False
 
 
 # ============== GROUP FUNCTIONS ==============
@@ -593,62 +485,23 @@ def remove_group_member(group_id: int, user_id: int) -> bool:
     return True
 
 
-def save_group_message(sender_id, group_id, encrypted_content):
+def save_group_message(sender_id: int, group_id: int, encrypted_content: str) -> int:
+    """Save an encrypted group message to the database"""
     conn = get_db_connection()
     cursor = conn.cursor()
-
-    created_at = datetime.now().isoformat()
-
-    msg_hash = message_hasher.generate(
-        encrypted_content,
-        sender_id,
-        created_at
-    )
-
-    cursor.execute("""
-        INSERT INTO messages
-        (sender_id, receiver_id, group_id, encrypted_content,
-         message_hash, is_group, is_broadcast, is_delivered, created_at)
-        VALUES (?, NULL, ?, ?, ?, 1, 0, 0, ?)
-    """, (
-        sender_id,
-        group_id,
-        encrypted_content,
-        msg_hash,
-        created_at
-    ))
-
+    
+    content_hash = calculate_message_hash(encrypted_content)
+    
+    cursor.execute('''
+        INSERT INTO messages 
+        (sender_id, group_id, encrypted_content, content_hash, is_group, is_delivered)
+        VALUES (?, ?, ?, ?, 1, 0)
+    ''', (sender_id, group_id, encrypted_content, content_hash))
+    
     conn.commit()
     message_id = cursor.lastrowid
     conn.close()
     return message_id
-def save_broadcast_message(sender_id: int, encrypted_content: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Sender hariç tüm kullanıcılar
-    cursor.execute(
-        "SELECT id FROM users WHERE id != ?",
-        (sender_id,)
-    )
-    users = cursor.fetchall()
-
-    message_ids = []
-
-    for user in users:
-        cursor.execute('''
-            INSERT INTO messages
-            (sender_id, receiver_id, encrypted_content, is_broadcast, is_delivered)
-            VALUES (?, ?, ?, 1, 0)
-        ''', (sender_id, user['id'], encrypted_content))
-
-        message_ids.append(cursor.lastrowid)
-
-    conn.commit()
-    conn.close()
-
-    return message_ids
-    
 
 
 def get_group_message_history(group_id: int, limit: int = 50) -> list:
@@ -673,7 +526,7 @@ def get_group_message_history(group_id: int, limit: int = 50) -> list:
             "sender_username": row['sender_username'],
             "group_id": row['group_id'],
             "encrypted_content": row['encrypted_content'],
-            "message_hash": row['message_hash'],
+            "content_hash": row['content_hash'],
             "created_at": row['created_at']
         })
     
@@ -681,20 +534,40 @@ def get_group_message_history(group_id: int, limit: int = 50) -> list:
     return list(reversed(messages))
 
 
-def get_undelivered_messages(user_id: int):
+def get_undelivered_group_messages(user_id: int) -> list:
+    """Get undelivered group messages for a user"""
     conn = get_db_connection()
     cursor = conn.cursor()
-
+    
     cursor.execute('''
-        SELECT m.*, u.username as sender_username
+        SELECT m.*, u.username as sender_username, g.name as group_name
         FROM messages m
         JOIN users u ON m.sender_id = u.id
-        WHERE m.receiver_id = ?
-        AND m.is_delivered = 0
+        JOIN groups g ON m.group_id = g.id
+        JOIN group_members gm ON m.group_id = gm.group_id
+        WHERE gm.user_id = ? 
+        AND m.is_group = 1 
+        AND m.sender_id != ?
+        AND m.created_at > (
+            SELECT COALESCE(MAX(delivered_at), '1970-01-01') 
+            FROM messages 
+            WHERE group_id = m.group_id AND is_group = 1
+        )
         ORDER BY m.created_at ASC
-    ''', (user_id,))
-
-    messages = cursor.fetchall()
+    ''', (user_id, user_id))
+    
+    messages = []
+    for row in cursor.fetchall():
+        messages.append({
+            "id": row['id'],
+            "sender_id": row['sender_id'],
+            "sender_username": row['sender_username'],
+            "group_id": row['group_id'],
+            "group_name": row['group_name'],
+            "encrypted_content": row['encrypted_content'],
+            "created_at": row['created_at']
+        })
+    
     conn.close()
     return messages
 
@@ -702,5 +575,4 @@ def get_undelivered_messages(user_id: int):
 # Initialize database when module is imported
 if __name__ == "__main__":
     init_db()
-
 

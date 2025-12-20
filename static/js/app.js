@@ -6,12 +6,7 @@
 // ============== GLOBAL STATE ==============
 let socket = null;
 let sessionKey = null;
-let currentTarget = {
-    type: 'broadcast',
-    id: null,
-    name: 'Broadcast',
-    username: null
-};
+let currentTarget = null; // No chat selected initially
 let typingTimeout = null;
 let users = [];
 let groups = [];
@@ -247,6 +242,21 @@ const UI = {
         const icon = document.getElementById('target-icon');
         const name = document.getElementById('target-name');
         const status = document.getElementById('target-status');
+        const messageForm = document.getElementById('message-form');
+        const messageInput = document.getElementById('message-input');
+        
+        if (!currentTarget) {
+            // No chat selected - show welcome message
+            icon.textContent = '👋';
+            name.textContent = 'Hoşgeldiniz!';
+            status.textContent = 'Bir sohbet seçin veya yeni grup oluşturun';
+            messageForm.style.display = 'none'; // Hide message form
+            this.showWelcomeMessage();
+            return;
+        }
+        
+        // Show message form when chat is selected
+        messageForm.style.display = 'flex';
         
         if (currentTarget.type === 'broadcast') {
             icon.textContent = '🌐';
@@ -263,6 +273,29 @@ const UI = {
             name.textContent = currentTarget.name;
             status.textContent = user?.is_online ? 'Çevrimiçi' : 'Çevrimdışı';
         }
+    },
+    
+    /**
+     * Show welcome message when no chat is selected
+     */
+    showWelcomeMessage() {
+        const messagesContainer = document.getElementById('messages-list');
+        messagesContainer.innerHTML = `
+            <div class="welcome-message">
+               
+                <h2>Hoşgeldiniz!</h2>
+                <p>Güvenli mesajlaşma uygulamanıza hoşgeldiniz.</p>
+                <div class="welcome-instructions">
+                    <p>💬 <strong>Başlamak için:</strong></p>
+                    <ul>
+                        <li>Sol taraftan bir kullanıcı seçin</li>
+                        <li>Genel kanala mesaj gönderin</li>
+                        <li>Yeni bir grup oluşturun</li>
+                    </ul>
+                </div>
+                
+            </div>
+        `;
     },
 
     /**
@@ -437,9 +470,11 @@ function initSocket() {
         const content = data.encrypted_content;
         
         // Only show message if we're in the correct channel
-        const shouldShow = (data.is_broadcast && currentTarget.type === 'broadcast') ||
-                          (!data.is_broadcast && currentTarget.type === 'direct' && 
-                           currentTarget.id === data.sender_id);
+        const shouldShow = currentTarget && (
+            (data.is_broadcast && currentTarget.type === 'broadcast') ||
+            (!data.is_broadcast && currentTarget.type === 'direct' && 
+             currentTarget.id === data.sender_id)
+        );
         
         if (shouldShow) {
             UI.addMessage({
@@ -449,7 +484,7 @@ function initSocket() {
                 timestamp: data.timestamp
             }, false);
         } else {
-            // Show notification for messages in other channels
+            // Show notification for messages in other channels or when no chat is selected
             const channelName = data.is_broadcast ? 'Broadcast' : data.sender_username;
             UI.showToast(`[${channelName}] ${data.sender_username}: ${content.substring(0, 30)}...`, 'info');
         }
@@ -460,9 +495,11 @@ function initSocket() {
         console.log('📬 Offline message:', data);
         
         // Only show if we're in the correct channel
-        const shouldShow = (data.is_broadcast && currentTarget.type === 'broadcast') ||
-                          (!data.is_broadcast && currentTarget.type === 'direct' && 
-                           currentTarget.id === data.sender_id);
+        const shouldShow = currentTarget && (
+            (data.is_broadcast && currentTarget.type === 'broadcast') ||
+            (!data.is_broadcast && currentTarget.type === 'direct' && 
+             currentTarget.id === data.sender_id)
+        );
         
         if (shouldShow) {
             UI.addMessage({
@@ -722,6 +759,12 @@ function selectBroadcast() {
 function sendMessage(content) {
     if (!content.trim() || !socket?.connected) return;
     
+    // Check if a chat is selected
+    if (!currentTarget) {
+        UI.showToast('Lütfen önce bir sohbet seçin!', 'warning');
+        return;
+    }
+    
     // Handle group messages
     if (currentTarget.type === 'group') {
         socket.emit('send_group_message', {
@@ -759,7 +802,7 @@ function sendMessage(content) {
 }
 
 function handleTyping() {
-    if (!socket?.connected) return;
+    if (!socket?.connected || !currentTarget) return;
     
     socket.emit('typing', {
         receiver_id: currentTarget.type === 'direct' ? currentTarget.id : null,
@@ -771,15 +814,20 @@ function handleTyping() {
     
     // Set timeout to stop typing indicator
     typingTimeout = setTimeout(() => {
-        socket.emit('stop_typing', {
-            receiver_id: currentTarget.type === 'direct' ? currentTarget.id : null,
-            is_broadcast: currentTarget.type === 'broadcast'
-        });
+        if (currentTarget) {
+            socket.emit('stop_typing', {
+                receiver_id: currentTarget.type === 'direct' ? currentTarget.id : null,
+                is_broadcast: currentTarget.type === 'broadcast'
+            });
+        }
     }, 2000);
 }
 
 // ============== EVENT LISTENERS ==============
 document.addEventListener('DOMContentLoaded', () => {
+    // Show welcome message initially
+    UI.updateChatHeader();
+    
     // Initialize socket connection
     initSocket();
     
