@@ -11,7 +11,6 @@ from encryption import SessionManager
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'SecureMessaging2024!SuperSecretKey')
 
-# Initialize SocketIO with eventlet for better async support
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # Flask-Login Setup
@@ -19,14 +18,11 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# Store active connections: {user_id: [sid1, sid2, ...]}
 active_connections = {}
-# Store user session keys: {sid: encryption_key}
 user_session_keys = {}
 
 
 class User(UserMixin):
-    """User model for Flask-Login"""
     def __init__(self, user_id, username):
         self.id = user_id
         self.username = username
@@ -34,18 +30,14 @@ class User(UserMixin):
 
 @login_manager.user_loader
 def load_user(user_id):
-    """Load user for Flask-Login"""
     user_data = db.get_user_by_id(int(user_id))
     if user_data:
         return User(user_data['id'], user_data['username'])
     return None
 
 
-# ============== HTTP ROUTES ==============
-
 @app.route('/')
 def index():
-    """Redirect to chat if logged in, otherwise to login"""
     if current_user.is_authenticated:
         return redirect(url_for('chat'))
     return redirect(url_for('login'))
@@ -53,7 +45,6 @@ def index():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    """Login page and handler"""
     if current_user.is_authenticated:
         return redirect(url_for('chat'))
     
@@ -79,7 +70,6 @@ def login():
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    """Registration page and handler"""
     if current_user.is_authenticated:
         return redirect(url_for('chat'))
     
@@ -112,20 +102,17 @@ def register():
     
     return render_template('register.html')
 
-# Initialize encryption system
 session_manager = SessionManager()
 
 @app.route('/chat')
 @login_required
 def chat():
-    """Main chat page"""
     return render_template('chat.html', username=current_user.username, user_id=current_user.id)
 
 
 @app.route('/logout')
 @login_required
 def logout():
-    """Logout handler"""
     db.set_user_online(current_user.id, False)
     logout_user()
     return redirect(url_for('login'))
@@ -134,9 +121,7 @@ def logout():
 @app.route('/api/users')
 @login_required
 def get_users():
-    """API endpoint to get all users"""
     users = db.get_all_users()
-    # Filter out current user
     users = [u for u in users if u['id'] != current_user.id]
     return jsonify(users)
 
@@ -144,9 +129,7 @@ def get_users():
 @app.route('/api/online-users')
 @login_required
 def get_online_users():
-    """API endpoint to get online users"""
     users = db.get_online_users()
-    # Filter out current user
     users = [u for u in users if u['id'] != current_user.id]
     return jsonify(users)
 
@@ -154,7 +137,6 @@ def get_online_users():
 @app.route('/api/groups')
 @login_required
 def get_groups():
-    """API endpoint to get user's groups"""
     groups = db.get_user_groups(current_user.id)
     return jsonify(groups)
 
@@ -162,54 +144,42 @@ def get_groups():
 @app.route('/api/groups/<int:group_id>/members')
 @login_required
 def get_group_members(group_id):
-    """API endpoint to get group members"""
     if not db.is_group_member(group_id, current_user.id):
         return jsonify({"error": "Not a member of this group"}), 403
     members = db.get_group_members(group_id)
     return jsonify(members)
 
 
-# ============== WEBSOCKET EVENTS ==============
-
 @socketio.on('connect')
 def handle_connect():
-    """Handle new WebSocket connection"""
     if current_user.is_authenticated:
         user_id = current_user.id
         sid = request.sid
         
-        # Add connection to active connections
         if user_id not in active_connections:
             active_connections[user_id] = []
         active_connections[user_id].append(sid)
         
-        # Generate session encryption key for this connection
         session_key = session_manager.create_session_key(sid)
 
         user_session_keys[sid] = session_key
         
-        # Join user's private room
         join_room(f'user_{user_id}')
-        join_room('broadcast')  # Join broadcast room
+        join_room('broadcast') 
         
-        # Join all group rooms
         user_groups = db.get_user_groups(user_id)
         for group in user_groups:
             join_room(f'group_{group["id"]}')
         
-        # Update online status
         db.set_user_online(user_id, True)
         
-        # Emit session key to client
         emit('session_key', {'key': session_key})
         
-        # Notify others about online status
         emit('user_online', {
             'user_id': user_id,
             'username': current_user.username
         }, room='broadcast', include_self=False)
         
-        # Deliver any undelivered messages
         deliver_offline_messages(user_id, sid)
         
         print(f"✅ User {current_user.username} connected (sid: {sid})")
@@ -217,28 +187,23 @@ def handle_connect():
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """Handle WebSocket disconnection"""
     if current_user.is_authenticated:
         user_id = current_user.id
         sid = request.sid
         
-        # Remove connection
         if user_id in active_connections:
             if sid in active_connections[user_id]:
                 active_connections[user_id].remove(sid)
             
-            # If no more connections, set user offline
             if not active_connections[user_id]:
                 del active_connections[user_id]
                 db.set_user_online(user_id, False)
                 
-                # Notify others
                 emit('user_offline', {
                     'user_id': user_id,
                     'username': current_user.username
                 }, room='broadcast', include_self=False)
         
-        # Clean up session key
         if sid in user_session_keys:
             session_manager.remove_session(sid)
             del user_session_keys[sid]
@@ -262,9 +227,7 @@ def handle_send_message(data):
 
     storage_encrypted = session_manager.encrypt_for_storage(encrypted_content)
 
-    # 📢 BROADCAST
     if is_broadcast:
-        # Broadcast mesajını kaydet (receiver_id=NULL, is_broadcast=1)
         message_id = db.save_message(
             sender_id=sender_id,
             receiver_id=None,
@@ -290,13 +253,10 @@ def handle_send_message(data):
         print(f"📢 Broadcast from {current_user.username}")
         return
 
-    # 💬 DIRECT MESSAGE
     receiver_id = data.get('receiver_id')
     if receiver_id:
-        # Alıcı online mı kontrol et
         is_delivered = receiver_id in active_connections
         
-        # Direct mesajı kaydet
         message_id = db.save_message(
             sender_id=sender_id,
             receiver_id=receiver_id,
@@ -305,7 +265,6 @@ def handle_send_message(data):
             is_delivered=is_delivered
         )
         
-        # Alıcı online ise gönder
         if is_delivered:
             emit('new_message', {
                 'sender_id': sender_id,
@@ -328,7 +287,6 @@ def handle_send_message(data):
 
 @socketio.on('get_history')
 def handle_get_history(data):
-    """Get message history"""
     if not current_user.is_authenticated:
         return
     
@@ -337,7 +295,6 @@ def handle_get_history(data):
     
     messages = db.get_message_history(current_user.id, other_user_id, limit)
     
-    # Decrypt messages for client
     decrypted_messages = []
     for msg in messages:
         try:
@@ -358,7 +315,6 @@ def handle_get_history(data):
 
 @socketio.on('typing')
 def handle_typing(data):
-    """Handle typing indicator"""
     if not current_user.is_authenticated:
         return
     
@@ -378,7 +334,6 @@ def handle_typing(data):
 
 @socketio.on('stop_typing')
 def handle_stop_typing(data):
-    """Handle stop typing indicator"""
     if not current_user.is_authenticated:
         return
     
@@ -396,11 +351,8 @@ def handle_stop_typing(data):
         emit('user_stop_typing', typing_data, room=f'user_{receiver_id}')
 
 
-# ============== GROUP WEBSOCKET EVENTS ==============
-
 @socketio.on('create_group')
 def handle_create_group(data):
-    """Handle group creation"""
     if not current_user.is_authenticated:
         return
     
@@ -415,26 +367,21 @@ def handle_create_group(data):
         emit('error', {'message': 'Grup adı en az 2 karakter olmalıdır!'})
         return
     
-    # Create the group
     result = db.create_group(name, current_user.id, member_ids)
     
     if result['success']:
         group_id = result['group_id']
         
-        # Join creator to group room
         join_room(f'group_{group_id}')
         
-        # Notify creator
         emit('group_created', {
             'group_id': group_id,
             'name': name,
             'member_count': len(member_ids) + 1
         })
         
-        # Notify members who are online
         for member_id in member_ids:
             if member_id in active_connections:
-                # Make member join the group room
                 for sid in active_connections[member_id]:
                     socketio.server.enter_room(sid, f'group_{group_id}')
                 
@@ -451,7 +398,6 @@ def handle_create_group(data):
 
 @socketio.on('send_group_message')
 def handle_send_group_message(data):
-    """Handle sending a message to a group"""
     if not current_user.is_authenticated:
         return
     
@@ -462,28 +408,23 @@ def handle_send_group_message(data):
         emit('error', {'message': 'Grup ID ve mesaj içeriği gereklidir!'})
         return
     
-    # Check if user is a member of the group
     if not db.is_group_member(group_id, current_user.id):
         emit('error', {'message': 'Bu grubun üyesi değilsiniz!'})
         return
     
-    # Get group info
     group = db.get_group_by_id(group_id)
     if not group:
         emit('error', {'message': 'Grup bulunamadı!'})
         return
     
-    # Encrypt for storage
     storage_encrypted = session_manager.encrypt_for_storage(encrypted_content)
     
-    # Save message to database
     message_id = db.save_group_message(
         sender_id=current_user.id,
         group_id=group_id,
         encrypted_content=storage_encrypted
     )
     
-    # Send to all group members (except sender)
     emit('new_group_message', {
         'message_id': message_id,
         'group_id': group_id,
@@ -494,7 +435,6 @@ def handle_send_group_message(data):
         'timestamp': datetime.now().isoformat()
     }, room=f'group_{group_id}', include_self=False)
     
-    # Confirm to sender
     emit('group_message_sent', {
         'message_id': message_id,
         'group_id': group_id
@@ -505,7 +445,6 @@ def handle_send_group_message(data):
 
 @socketio.on('get_group_history')
 def handle_get_group_history(data):
-    """Get message history for a group"""
     if not current_user.is_authenticated:
         return
     
@@ -515,14 +454,12 @@ def handle_get_group_history(data):
     if not group_id:
         return
     
-    # Check if user is a member
     if not db.is_group_member(group_id, current_user.id):
         emit('error', {'message': 'Bu grubun üyesi değilsiniz!'})
         return
     
     messages = db.get_group_message_history(group_id, limit)
     
-    # Decrypt messages for client
     decrypted_messages = []
     for msg in messages:
         try:
@@ -546,7 +483,6 @@ def handle_get_group_history(data):
 
 @socketio.on('join_group_rooms')
 def handle_join_group_rooms():
-    """Join all group rooms for the current user"""
     if not current_user.is_authenticated:
         return
     
@@ -556,7 +492,6 @@ def handle_join_group_rooms():
 
 
 def deliver_offline_messages(user_id: int, sid: str):
-    """Deliver undelivered messages to a user who just came online"""
     undelivered = db.get_undelivered_messages(user_id)
     
     if undelivered:
@@ -565,7 +500,6 @@ def deliver_offline_messages(user_id: int, sid: str):
         message_ids = []
         for msg in undelivered:
             try:
-                # Decrypt from storage and send to client
                 decrypted = session_manager.decrypt_from_storage(msg['encrypted_content'])
                 
                 socketio.emit('offline_message', {
@@ -580,14 +514,10 @@ def deliver_offline_messages(user_id: int, sid: str):
             except Exception as e:
                 print(f"Error delivering message {msg['id']}: {e}")
         
-        # Mark messages as delivered
         db.mark_messages_delivered(message_ids)
 
 
-# ============== MAIN ==============
-
 if __name__ == '__main__':
-    # Initialize database
     db.init_db()
     
     print("=" * 50)
@@ -596,5 +526,4 @@ if __name__ == '__main__':
     print("🚀 Starting server on http://127.0.0.1:5000")
     print("=" * 50)
     
-    # Run with eventlet for WebSocket support
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)
