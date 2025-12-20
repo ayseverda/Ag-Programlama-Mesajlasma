@@ -67,10 +67,6 @@ class PasswordHasher:
 
 password_hasher = PasswordHasher()
 
-# =====================================================
-# 🧾 MESSAGE HASHER (BÜTÜNLÜK İÇİN)
-# =====================================================
-
 class MessageHasher:
     def __init__(self):
         self.fnv_prime = 0x100000001b3
@@ -102,30 +98,15 @@ class MessageHasher:
 
 
 message_hasher = MessageHasher()
-
-
-
-
-
-
-
-
 DATABASE_NAME = "messaging.db"
-
-
 def get_db_connection():
-    """Create and return a database connection"""
     conn = sqlite3.connect(DATABASE_NAME)
     conn.row_factory = sqlite3.Row
     return conn
-
-
 def init_db():
-    """Initialize the database with required tables"""
     conn = get_db_connection()
     c = conn.cursor()
     
-    # Users table - stores credentials and online status
     c.execute("""
       CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -154,7 +135,6 @@ def init_db():
         )
     """)
     
-    # Groups table - stores group information
     c.execute('''
         CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -164,7 +144,6 @@ def init_db():
             FOREIGN KEY (creator_id) REFERENCES users(id)
         )
     ''')
-    # Group members table - stores group membership
     c.execute('''
         CREATE TABLE IF NOT EXISTS group_members (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -251,7 +230,6 @@ def authenticate_user(username: str, password: str) -> dict:
 
 
 def set_user_online(user_id: int, is_online: bool = True):
-    """Update user's online status"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -264,7 +242,6 @@ def set_user_online(user_id: int, is_online: bool = True):
 
 
 def get_online_users() -> list:
-    """Get list of all online users"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -275,7 +252,6 @@ def get_online_users() -> list:
 
 
 def get_all_users() -> list:
-    """Get list of all registered users"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -287,7 +263,6 @@ def get_all_users() -> list:
 
 
 def get_user_by_id(user_id: int) -> dict:
-    """Get user information by ID"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -301,7 +276,6 @@ def get_user_by_id(user_id: int) -> dict:
 
 
 def get_user_by_username(username: str) -> dict:
-    """Get user information by username"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -312,11 +286,6 @@ def get_user_by_username(username: str) -> dict:
     if user:
         return {"id": user['id'], "username": user['username'], "is_online": bool(user['is_online'])}
     return None
-
-
-
-
-
 def save_message(sender_id, receiver_id, encrypted_content, is_broadcast, is_delivered):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -346,12 +315,9 @@ def save_message(sender_id, receiver_id, encrypted_content, is_broadcast, is_del
     return message_id
 
 def get_undelivered_messages(user_id: int) -> list:
-    """Get undelivered messages - direct ve broadcast mesajları"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Direct mesajlar (receiver_id = user_id) ve broadcast mesajlar (receiver_id IS NULL)
-    # Kullanıcı mesajı gönderdiğinde (sender_id = user_id) hariç
     cursor.execute("""
         SELECT m.id, m.sender_id, u.username AS sender_username,
                m.encrypted_content, m.message_hash,
@@ -394,12 +360,10 @@ def mark_messages_delivered(message_ids: list):
     conn.close()
 
 def get_message_history(user_id: int, other_user_id: int = None, limit=50):
-    """Get message history - other_user_id NULL ise broadcast, değilse direct"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
     if other_user_id:
-        # Direct mesaj geçmişi (iki kullanıcı arası)
         cursor.execute('''
             SELECT m.*, u.username as sender_username
             FROM messages m
@@ -412,7 +376,6 @@ def get_message_history(user_id: int, other_user_id: int = None, limit=50):
             LIMIT ?
         ''', (user_id, other_user_id, other_user_id, user_id, limit))
     else:
-        # Broadcast mesaj geçmişi (receiver_id NULL olanlar)
         cursor.execute('''
             SELECT m.*, u.username as sender_username
             FROM messages m
@@ -426,7 +389,6 @@ def get_message_history(user_id: int, other_user_id: int = None, limit=50):
     rows = cursor.fetchall()
     conn.close()
     
-    # Row objelerini dict'e çevir
     messages = []
     for row in rows:
         messages.append({
@@ -440,7 +402,7 @@ def get_message_history(user_id: int, other_user_id: int = None, limit=50):
             "created_at": row['created_at']
         })
     
-    return list(reversed(messages))  # Eski -> Yeni sıralama
+    return list(reversed(messages))
 
 
 def verify_message_integrity(message_id: int) -> bool:
@@ -472,25 +434,21 @@ def verify_message_integrity(message_id: int) -> bool:
 # ============== GROUP FUNCTIONS ==============
 
 def create_group(name: str, creator_id: int, member_ids: list) -> dict:
-    """Create a new group with specified members"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        # Create the group
         cursor.execute(
             'INSERT INTO groups (name, creator_id) VALUES (?, ?)',
             (name, creator_id)
         )
         group_id = cursor.lastrowid
         
-        # Add creator as a member
         cursor.execute(
             'INSERT INTO group_members (group_id, user_id) VALUES (?, ?)',
             (group_id, creator_id)
         )
         
-        # Add other members
         for member_id in member_ids:
             if member_id != creator_id:
                 cursor.execute(
@@ -508,7 +466,6 @@ def create_group(name: str, creator_id: int, member_ids: list) -> dict:
 
 
 def get_user_groups(user_id: int) -> list:
-    """Get all groups a user belongs to"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -536,7 +493,6 @@ def get_user_groups(user_id: int) -> list:
 
 
 def get_group_by_id(group_id: int) -> dict:
-    """Get group information by ID"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -555,7 +511,6 @@ def get_group_by_id(group_id: int) -> dict:
 
 
 def get_group_members(group_id: int) -> list:
-    """Get all members of a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -579,7 +534,6 @@ def get_group_members(group_id: int) -> list:
 
 
 def is_group_member(group_id: int, user_id: int) -> bool:
-    """Check if a user is a member of a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -593,7 +547,7 @@ def is_group_member(group_id: int, user_id: int) -> bool:
 
 
 def add_group_member(group_id: int, user_id: int) -> bool:
-    """Add a user to a group"""
+
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -611,7 +565,6 @@ def add_group_member(group_id: int, user_id: int) -> bool:
 
 
 def remove_group_member(group_id: int, user_id: int) -> bool:
-    """Remove a user from a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -654,7 +607,6 @@ def save_group_message(sender_id, group_id, encrypted_content):
     conn.close()
     return message_id
 def save_broadcast_message(sender_id: int, encrypted_content: str):
-    """Save broadcast message - tek bir kayıt olarak (receiver_id=NULL)"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -677,7 +629,6 @@ def save_broadcast_message(sender_id: int, encrypted_content: str):
 
 
 def get_group_message_history(group_id: int, limit: int = 50) -> list:
-    """Get message history for a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -705,9 +656,5 @@ def get_group_message_history(group_id: int, limit: int = 50) -> list:
     conn.close()
     return list(reversed(messages))
 
-
-
-
-# Initialize database when module is imported
 if __name__ == "__main__":
     init_db()
