@@ -1,8 +1,3 @@
-"""
-SQLite Database Module for Secure Messaging Application
-Handles user credentials, message history, and online status
-"""
-
 import sqlite3
 import hashlib
 from datetime import datetime
@@ -12,18 +7,15 @@ DATABASE_NAME = "messaging.db"
 
 
 def get_db_connection():
-    """Create and return a database connection"""
     conn = sqlite3.connect(DATABASE_NAME)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db():
-    """Initialize the database with required tables"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Users table - stores credentials and online status
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,7 +27,6 @@ def init_db():
         )
     ''')
     
-    # Messages table - stores encrypted messages with hash for integrity
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +46,6 @@ def init_db():
         )
     ''')
     
-    # Groups table - stores group information
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,7 +56,6 @@ def init_db():
         )
     ''')
     
-    # Group members table - stores group membership
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS group_members (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,7 +74,6 @@ def init_db():
 
 
 def create_user(username: str, password: str) -> dict:
-    """Create a new user account"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -105,7 +93,6 @@ def create_user(username: str, password: str) -> dict:
 
 
 def authenticate_user(username: str, password: str) -> dict:
-    """Authenticate user with username and password"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -123,7 +110,6 @@ def authenticate_user(username: str, password: str) -> dict:
 
 
 def set_user_online(user_id: int, is_online: bool = True):
-    """Update user's online status"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -136,7 +122,6 @@ def set_user_online(user_id: int, is_online: bool = True):
 
 
 def get_online_users() -> list:
-    """Get list of all online users"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -147,7 +132,6 @@ def get_online_users() -> list:
 
 
 def get_all_users() -> list:
-    """Get list of all registered users"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -159,7 +143,6 @@ def get_all_users() -> list:
 
 
 def get_user_by_id(user_id: int) -> dict:
-    """Get user information by ID"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -173,7 +156,6 @@ def get_user_by_id(user_id: int) -> dict:
 
 
 def get_user_by_username(username: str) -> dict:
-    """Get user information by username"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -187,13 +169,11 @@ def get_user_by_username(username: str) -> dict:
 
 
 def calculate_message_hash(content: str) -> str:
-    """Calculate SHA-256 hash of message content for integrity verification"""
     return hashlib.sha256(content.encode('utf-8')).hexdigest()
 
 
 def save_message(sender_id: int, receiver_id: int, encrypted_content: str, 
                  is_broadcast: bool = False, is_delivered: bool = False) -> int:
-    """Save an encrypted message to the database"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -213,7 +193,6 @@ def save_message(sender_id: int, receiver_id: int, encrypted_content: str,
 
 
 def get_undelivered_messages(user_id: int) -> list:
-    """Get all undelivered messages for a user"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -244,7 +223,6 @@ def get_undelivered_messages(user_id: int) -> list:
 
 
 def mark_messages_delivered(message_ids: list):
-    """Mark messages as delivered"""
     if not message_ids:
         return
     
@@ -263,12 +241,10 @@ def mark_messages_delivered(message_ids: list):
 
 
 def get_message_history(user_id: int, other_user_id: int = None, limit: int = 50) -> list:
-    """Get message history for a user (with a specific user or broadcast)"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     if other_user_id:
-        # Direct messages between two users (exclude broadcast messages)
         cursor.execute('''
             SELECT m.*, 
                    s.username as sender_username,
@@ -284,7 +260,6 @@ def get_message_history(user_id: int, other_user_id: int = None, limit: int = 50
             LIMIT ?
         ''', (user_id, other_user_id, other_user_id, user_id, limit))
     else:
-        # Broadcast messages only
         cursor.execute('''
             SELECT m.*, 
                    s.username as sender_username,
@@ -316,7 +291,6 @@ def get_message_history(user_id: int, other_user_id: int = None, limit: int = 50
 
 
 def verify_message_integrity(message_id: int) -> bool:
-    """Verify message integrity by comparing stored hash with calculated hash"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -330,28 +304,22 @@ def verify_message_integrity(message_id: int) -> bool:
     return False
 
 
-# ============== GROUP FUNCTIONS ==============
-
 def create_group(name: str, creator_id: int, member_ids: list) -> dict:
-    """Create a new group with specified members"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        # Create the group
         cursor.execute(
             'INSERT INTO groups (name, creator_id) VALUES (?, ?)',
             (name, creator_id)
         )
         group_id = cursor.lastrowid
         
-        # Add creator as a member
         cursor.execute(
             'INSERT INTO group_members (group_id, user_id) VALUES (?, ?)',
             (group_id, creator_id)
         )
         
-        # Add other members
         for member_id in member_ids:
             if member_id != creator_id:
                 cursor.execute(
@@ -369,7 +337,6 @@ def create_group(name: str, creator_id: int, member_ids: list) -> dict:
 
 
 def get_user_groups(user_id: int) -> list:
-    """Get all groups a user belongs to"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -397,7 +364,6 @@ def get_user_groups(user_id: int) -> list:
 
 
 def get_group_by_id(group_id: int) -> dict:
-    """Get group information by ID"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -416,7 +382,6 @@ def get_group_by_id(group_id: int) -> dict:
 
 
 def get_group_members(group_id: int) -> list:
-    """Get all members of a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -440,7 +405,6 @@ def get_group_members(group_id: int) -> list:
 
 
 def is_group_member(group_id: int, user_id: int) -> bool:
-    """Check if a user is a member of a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -454,7 +418,6 @@ def is_group_member(group_id: int, user_id: int) -> bool:
 
 
 def add_group_member(group_id: int, user_id: int) -> bool:
-    """Add a user to a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -472,7 +435,6 @@ def add_group_member(group_id: int, user_id: int) -> bool:
 
 
 def remove_group_member(group_id: int, user_id: int) -> bool:
-    """Remove a user from a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -486,7 +448,6 @@ def remove_group_member(group_id: int, user_id: int) -> bool:
 
 
 def save_group_message(sender_id: int, group_id: int, encrypted_content: str) -> int:
-    """Save an encrypted group message to the database"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -505,7 +466,6 @@ def save_group_message(sender_id: int, group_id: int, encrypted_content: str) ->
 
 
 def get_group_message_history(group_id: int, limit: int = 50) -> list:
-    """Get message history for a group"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -535,7 +495,6 @@ def get_group_message_history(group_id: int, limit: int = 50) -> list:
 
 
 def get_undelivered_group_messages(user_id: int) -> list:
-    """Get undelivered group messages for a user"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -571,8 +530,6 @@ def get_undelivered_group_messages(user_id: int) -> list:
     conn.close()
     return messages
 
-
-# Initialize database when module is imported
 if __name__ == "__main__":
     init_db()
 

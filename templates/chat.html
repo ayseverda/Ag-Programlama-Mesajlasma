@@ -13,7 +13,6 @@
     <div class="cyber-grid"></div>
     
     <div class="chat-container">
-        <!-- Sidebar -->
         <aside class="sidebar">
             <div class="sidebar-header">
                 <div class="logo-mini"></div>
@@ -73,7 +72,6 @@
             </div>
         </aside>
         
-        <!-- Main Chat Area -->
         <main class="chat-main">
             <div class="chat-header">
                 <div class="chat-target">
@@ -96,7 +94,6 @@
             
             <div class="messages-container" id="messages-container">
                 <div class="messages-list" id="messages-list">
-                    <!-- Messages will be inserted here -->
                     <div class="welcome-message">
                         <div class="welcome-icon">🔐</div>
                         <h2>Güvenli Mesajlaşma</h2>
@@ -132,10 +129,8 @@
         </main>
     </div>
     
-    <!-- Notification Toast -->
     <div id="toast-container" class="toast-container"></div>
     
-    <!-- Create Group Modal -->
     <div id="create-group-modal" class="modal">
         <div class="modal-overlay"></div>
         <div class="modal-content">
@@ -172,7 +167,6 @@
     </div>
     
     <script>
-        // User data from server
         const currentUser = {
             id: {{ user_id }},
             username: '{{ username }}'

@@ -1,9 +1,3 @@
-/**
- * Secure Web Messaging Agent - Frontend Application
- * Handles WebSocket communication, E2E encryption, and UI interactions
- */
-
-// ============== GLOBAL STATE ==============
 let socket = null;
 let sessionKey = null;
 let currentTarget = null; // No chat selected initially
@@ -11,21 +5,16 @@ let typingTimeout = null;
 let users = [];
 let groups = [];
 
-// ============== ENCRYPTION UTILITIES ==============
 const Encryption = {
-    /**
-     * Encrypt message using AES with session key
-     */
+  
     encrypt(message, key) {
         try {
-            // Generate random IV
             const iv = CryptoJS.lib.WordArray.random(16);
             const encrypted = CryptoJS.AES.encrypt(message, CryptoJS.enc.Base64.parse(key), {
                 iv: iv,
                 mode: CryptoJS.mode.CBC,
                 padding: CryptoJS.pad.Pkcs7
             });
-            // Combine IV + ciphertext and encode as base64
             const combined = iv.concat(encrypted.ciphertext);
             return CryptoJS.enc.Base64.stringify(combined);
         } catch (error) {
@@ -34,16 +23,10 @@ const Encryption = {
         }
     },
 
-    /**
-     * Decrypt message using AES with session key
-     */
     decrypt(encryptedMessage, key) {
         try {
-            // Decode base64
             const combined = CryptoJS.enc.Base64.parse(encryptedMessage);
-            // Extract IV (first 16 bytes = 4 words)
             const iv = CryptoJS.lib.WordArray.create(combined.words.slice(0, 4), 16);
-            // Extract ciphertext
             const ciphertext = CryptoJS.lib.WordArray.create(
                 combined.words.slice(4),
                 combined.sigBytes - 16
@@ -65,19 +48,12 @@ const Encryption = {
         }
     },
 
-    /**
-     * Calculate SHA-256 hash of message
-     */
     hash(message) {
         return CryptoJS.SHA256(message).toString();
     }
 };
 
-// ============== UI UTILITIES ==============
 const UI = {
-    /**
-     * Show toast notification
-     */
     showToast(message, type = 'info', duration = 4000) {
         const container = document.getElementById('toast-container');
         const toast = document.createElement('div');
@@ -98,13 +74,11 @@ const UI = {
         
         container.appendChild(toast);
         
-        // Close button handler
         toast.querySelector('.toast-close').addEventListener('click', () => {
             toast.style.animation = 'toastOut 0.3s ease-out forwards';
             setTimeout(() => toast.remove(), 300);
         });
         
-        // Auto remove
         setTimeout(() => {
             if (toast.parentElement) {
                 toast.style.animation = 'toastOut 0.3s ease-out forwards';
@@ -113,9 +87,6 @@ const UI = {
         }, duration);
     },
 
-    /**
-     * Update connection status indicator
-     */
     updateConnectionStatus(status) {
         const statusEl = document.getElementById('connection-status');
         const statusText = statusEl.querySelector('.status-text');
@@ -136,9 +107,6 @@ const UI = {
         }
     },
 
-    /**
-     * Add message to chat
-     */
     addMessage(data, isSent = false) {
         const messagesContainer = document.getElementById('messages-list');
         const welcomeMsg = messagesContainer.querySelector('.welcome-message');
@@ -174,26 +142,17 @@ const UI = {
         this.scrollToBottom();
     },
 
-    /**
-     * Scroll messages to bottom
-     */
     scrollToBottom() {
         const container = document.getElementById('messages-container');
         container.scrollTop = container.scrollHeight;
     },
 
-    /**
-     * Escape HTML to prevent XSS
-     */
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     },
 
-    /**
-     * Update users list in sidebar
-     */
     updateUsersList(usersList) {
         const container = document.getElementById('users-list');
         container.innerHTML = '';
@@ -235,9 +194,6 @@ const UI = {
         });
     },
 
-    /**
-     * Update chat header for selected target
-     */
     updateChatHeader() {
         const icon = document.getElementById('target-icon');
         const name = document.getElementById('target-name');
@@ -246,16 +202,14 @@ const UI = {
         const messageInput = document.getElementById('message-input');
         
         if (!currentTarget) {
-            // No chat selected - show welcome message
             icon.textContent = '👋';
             name.textContent = 'Hoşgeldiniz!';
             status.textContent = 'Bir sohbet seçin veya yeni grup oluşturun';
-            messageForm.style.display = 'none'; // Hide message form
+            messageForm.style.display = 'none';
             this.showWelcomeMessage();
             return;
         }
         
-        // Show message form when chat is selected
         messageForm.style.display = 'flex';
         
         if (currentTarget.type === 'broadcast') {
@@ -275,9 +229,6 @@ const UI = {
         }
     },
     
-    /**
-     * Show welcome message when no chat is selected
-     */
     showWelcomeMessage() {
         const messagesContainer = document.getElementById('messages-list');
         messagesContainer.innerHTML = `
@@ -298,9 +249,6 @@ const UI = {
         `;
     },
 
-    /**
-     * Show/hide typing indicator
-     */
     showTyping(username, show = true) {
         const indicator = document.getElementById('typing-indicator');
         const text = document.getElementById('typing-text');
@@ -313,9 +261,6 @@ const UI = {
         }
     },
 
-    /**
-     * Clear messages
-     */
     clearMessages() {
         const container = document.getElementById('messages-list');
         container.innerHTML = `
@@ -327,9 +272,6 @@ const UI = {
         `;
     },
 
-    /**
-     * Update groups list in sidebar
-     */
     updateGroupsList(groupsList) {
         const container = document.getElementById('groups-list');
         container.innerHTML = '';
@@ -361,9 +303,6 @@ const UI = {
         });
     },
 
-    /**
-     * Show/hide modal
-     */
     showModal(show = true) {
         const modal = document.getElementById('create-group-modal');
         if (show) {
@@ -373,7 +312,6 @@ const UI = {
         }
         
         if (show) {
-            // Populate member selection with users
             const memberSelection = document.getElementById('member-selection');
             if (users.length === 0) {
                 memberSelection.innerHTML = '<div class="no-members-msg">Eklenecek kullanıcı yok</div>';
@@ -394,9 +332,6 @@ const UI = {
         }
     },
 
-    /**
-     * Add group message to chat
-     */
     addGroupMessage(data, isSent = false) {
         const messagesContainer = document.getElementById('messages-list');
         const welcomeMsg = messagesContainer.querySelector('.welcome-message');
@@ -431,7 +366,7 @@ const UI = {
     }
 };
 
-// ============== SOCKET HANDLERS ==============
+// SOCKET HANDLERS 
 function initSocket() {
     socket = io({
         transports: ['websocket', 'polling']
@@ -457,7 +392,6 @@ function initSocket() {
         UI.updateConnectionStatus('disconnected');
     });
 
-    // Session key from server
     socket.on('session_key', (data) => {
         sessionKey = data.key;
         console.log('🔐 Session key received');
@@ -469,7 +403,6 @@ function initSocket() {
         
         const content = data.encrypted_content;
         
-        // Only show message if we're in the correct channel
         const shouldShow = currentTarget && (
             (data.is_broadcast && currentTarget.type === 'broadcast') ||
             (!data.is_broadcast && currentTarget.type === 'direct' && 
@@ -484,7 +417,6 @@ function initSocket() {
                 timestamp: data.timestamp
             }, false);
         } else {
-            // Show notification for messages in other channels or when no chat is selected
             const channelName = data.is_broadcast ? 'Broadcast' : data.sender_username;
             UI.showToast(`[${channelName}] ${data.sender_username}: ${content.substring(0, 30)}...`, 'info');
         }
@@ -494,7 +426,6 @@ function initSocket() {
     socket.on('offline_message', (data) => {
         console.log('📬 Offline message:', data);
         
-        // Only show if we're in the correct channel
         const shouldShow = currentTarget && (
             (data.is_broadcast && currentTarget.type === 'broadcast') ||
             (!data.is_broadcast && currentTarget.type === 'direct' && 
@@ -509,18 +440,15 @@ function initSocket() {
                 timestamp: data.created_at
             }, false);
         } else {
-            // Show notification
             const channelName = data.is_broadcast ? 'Broadcast' : data.sender_username;
             UI.showToast(`[${channelName}] Yeni mesaj: ${data.content.substring(0, 30)}...`, 'info');
         }
     });
 
-    // Message sent confirmation
     socket.on('message_sent', (data) => {
         console.log('✅ Message sent:', data);
     });
 
-    // Message history
     socket.on('message_history', (data) => {
         UI.clearMessages();
         data.messages.forEach(msg => {
@@ -534,7 +462,6 @@ function initSocket() {
         });
     });
 
-    // User online/offline events
     socket.on('user_online', (data) => {
         console.log('👤 User online:', data.username);
         UI.showToast(`${data.username} çevrimiçi oldu`, 'success');
@@ -547,7 +474,6 @@ function initSocket() {
         updateUserStatus(data.user_id, false);
     });
 
-    // Typing indicators
     socket.on('user_typing', (data) => {
         if (data.user_id !== currentUser.id) {
             UI.showTyping(data.username, true);
@@ -558,14 +484,12 @@ function initSocket() {
         UI.showTyping(data.username, false);
     });
 
-    // Error handling
     socket.on('error', (data) => {
         UI.showToast(data.message, 'error');
     });
 
-    // ============== GROUP SOCKET EVENTS ==============
+    // GROUP SOCKET EVENTS 
     
-    // Group created confirmation
     socket.on('group_created', (data) => {
         console.log('👥 Group created:', data.name);
         UI.showToast(`Grup "${data.name}" oluşturuldu!`, 'success');
@@ -573,18 +497,15 @@ function initSocket() {
         loadGroups();
     });
 
-    // Added to a group
     socket.on('added_to_group', (data) => {
         console.log('👥 Added to group:', data.name);
         UI.showToast(`${data.added_by} sizi "${data.name}" grubuna ekledi`, 'info');
         loadGroups();
     });
 
-    // New group message received
     socket.on('new_group_message', (data) => {
         console.log('📨 New group message:', data);
         
-        // Only show if we're viewing this group
         if (currentTarget.type === 'group' && currentTarget.id === data.group_id) {
             UI.addGroupMessage({
                 sender_username: data.sender_username,
@@ -593,17 +514,14 @@ function initSocket() {
                 timestamp: data.timestamp
             }, false);
         } else {
-            // Show notification
             UI.showToast(`[${data.group_name}] ${data.sender_username}: ${data.encrypted_content.substring(0, 30)}...`, 'info');
         }
     });
 
-    // Group message sent confirmation
     socket.on('group_message_sent', (data) => {
         console.log('✅ Group message sent:', data);
     });
 
-    // Group message history
     socket.on('group_message_history', (data) => {
         UI.clearMessages();
         data.messages.forEach(msg => {
@@ -618,7 +536,6 @@ function initSocket() {
     });
 }
 
-// ============== USER MANAGEMENT ==============
 async function loadUsers() {
     try {
         const response = await fetch('/api/users');
@@ -629,7 +546,6 @@ async function loadUsers() {
     }
 }
 
-// ============== GROUP MANAGEMENT ==============
 async function loadGroups() {
     try {
         const response = await fetch('/api/groups');
@@ -641,7 +557,6 @@ async function loadGroups() {
 }
 
 function selectGroup(group) {
-    // Update active state in sidebar
     document.querySelectorAll('.user-item, .channel-item, .group-item').forEach(el => {
         el.classList.remove('active');
     });
@@ -649,7 +564,6 @@ function selectGroup(group) {
     const groupEl = document.querySelector(`[data-group-id="${group.id}"]`);
     if (groupEl) groupEl.classList.add('active');
     
-    // Update current target
     currentTarget = {
         type: 'group',
         id: group.id,
@@ -659,7 +573,6 @@ function selectGroup(group) {
     UI.updateChatHeader();
     UI.clearMessages();
     
-    // Load group message history
     socket.emit('get_group_history', { group_id: group.id });
 }
 
@@ -677,7 +590,6 @@ function createGroup() {
         return;
     }
     
-    // Get selected members
     const checkboxes = document.querySelectorAll('#member-selection input[type="checkbox"]:checked');
     const memberIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
     
@@ -686,7 +598,6 @@ function createGroup() {
         return;
     }
     
-    // Send create group event
     socket.emit('create_group', {
         name: name,
         member_ids: memberIds
@@ -698,19 +609,15 @@ function updateUserStatus(userId, isOnline) {
     if (user) {
         user.is_online = isOnline;
         UI.updateUsersList(users);
-        
-        // Update header if viewing this user
         if (currentTarget.type === 'direct' && currentTarget.id === userId) {
             UI.updateChatHeader();
         }
     } else {
-        // Reload users list if new user
         loadUsers();
     }
 }
 
 function selectUser(user) {
-    // Update active state in sidebar
     document.querySelectorAll('.user-item, .channel-item, .group-item').forEach(el => {
         el.classList.remove('active');
     });
@@ -718,7 +625,6 @@ function selectUser(user) {
     const userEl = document.querySelector(`[data-user-id="${user.id}"]`);
     if (userEl) userEl.classList.add('active');
     
-    // Update current target
     currentTarget = {
         type: 'direct',
         id: user.id,
@@ -729,18 +635,15 @@ function selectUser(user) {
     UI.updateChatHeader();
     UI.clearMessages();
     
-    // Load message history with this user
     socket.emit('get_history', { other_user_id: user.id });
 }
 
 function selectBroadcast() {
-    // Update active state
     document.querySelectorAll('.user-item, .channel-item, .group-item').forEach(el => {
         el.classList.remove('active');
     });
     document.querySelector('[data-channel="broadcast"]').classList.add('active');
     
-    // Update current target
     currentTarget = {
         type: 'broadcast',
         id: null,
@@ -751,28 +654,23 @@ function selectBroadcast() {
     UI.updateChatHeader();
     UI.clearMessages();
     
-    // Load broadcast history
     socket.emit('get_history', {});
 }
 
-// ============== MESSAGE HANDLING ==============
 function sendMessage(content) {
     if (!content.trim() || !socket?.connected) return;
     
-    // Check if a chat is selected
     if (!currentTarget) {
         UI.showToast('Lütfen önce bir sohbet seçin!', 'warning');
         return;
     }
     
-    // Handle group messages
     if (currentTarget.type === 'group') {
         socket.emit('send_group_message', {
             group_id: currentTarget.id,
             encrypted_content: content
         });
         
-        // Add to local chat
         UI.addGroupMessage({
             sender_username: currentUser.username,
             content: content,
@@ -782,8 +680,6 @@ function sendMessage(content) {
         return;
     }
     
-    // For now, we send the content directly
-    // In a full E2E implementation, we would encrypt here
     const messageData = {
         encrypted_content: content,
         is_broadcast: currentTarget.type === 'broadcast',
@@ -792,7 +688,6 @@ function sendMessage(content) {
     
     socket.emit('send_message', messageData);
     
-    // Add to local chat
     UI.addMessage({
         sender_username: currentUser.username,
         content: content,
@@ -809,10 +704,8 @@ function handleTyping() {
         is_broadcast: currentTarget.type === 'broadcast'
     });
     
-    // Clear previous timeout
     if (typingTimeout) clearTimeout(typingTimeout);
     
-    // Set timeout to stop typing indicator
     typingTimeout = setTimeout(() => {
         if (currentTarget) {
             socket.emit('stop_typing', {
@@ -823,9 +716,8 @@ function handleTyping() {
     }, 2000);
 }
 
-// ============== EVENT LISTENERS ==============
+// EVENT LISTENERS
 document.addEventListener('DOMContentLoaded', () => {
-    // Show welcome message initially
     UI.updateChatHeader();
     
     // Initialize socket connection
@@ -844,13 +736,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // Typing indicator
     messageInput.addEventListener('input', handleTyping);
     
-    // Broadcast channel click
     document.querySelector('[data-channel="broadcast"]').addEventListener('click', selectBroadcast);
     
-    // History button
     document.getElementById('btn-history').addEventListener('click', () => {
         if (currentTarget.type === 'group') {
             socket.emit('get_group_history', { group_id: currentTarget.id });
@@ -862,12 +751,10 @@ document.addEventListener('DOMContentLoaded', () => {
         UI.showToast('Mesaj geçmişi yükleniyor...', 'info');
     });
     
-    // Create group button
     document.getElementById('btn-create-group').addEventListener('click', () => {
         UI.showModal(true);
     });
     
-    // Modal close buttons
     document.getElementById('close-modal').addEventListener('click', () => {
         UI.showModal(false);
     });
@@ -880,16 +767,13 @@ document.addEventListener('DOMContentLoaded', () => {
         createGroup();
     });
     
-    // Close modal on overlay click
     document.querySelector('.modal-overlay')?.addEventListener('click', () => {
         UI.showModal(false);
     });
     
-    // Focus input on page load
     messageInput.focus();
 });
 
-// Add CSS animation for toast out
 const style = document.createElement('style');
 style.textContent = `
     @keyframes toastOut {

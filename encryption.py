@@ -1,11 +1,7 @@
-
-
 import base64
 import secrets
 
-
 class CustomCipher:
-    """Kullanıcı tarafından tasarlanmış özel şifreleme algoritması."""
 
     def __init__(self, key: str):
         self.key = key
