@@ -368,7 +368,9 @@ const UI = {
 
 // SOCKET HANDLERS 
 function initSocket() {
-    socket = io({
+    // Dinamik IP bağlantısı - window.location.origin kullanarak
+    // Hangi IP'den açılırsa açılsın otomatik olarak o IP'ye bağlanır
+    socket = io(window.location.origin, {
         transports: ['websocket', 'polling']
     });
 
@@ -719,6 +721,17 @@ function handleTyping() {
 // EVENT LISTENERS
 document.addEventListener('DOMContentLoaded', () => {
     UI.updateChatHeader();
+    
+    // Sunucu IP adresini göster (sunum için kolaylık)
+    const serverInfo = document.getElementById('server-url');
+    if (serverInfo) {
+        const hostname = window.location.hostname;
+        const port = window.location.port || '5000';
+        const protocol = window.location.protocol;
+        const fullUrl = `${protocol}//${hostname}:${port}`;
+        serverInfo.textContent = `Sunucu: ${fullUrl}`;
+        serverInfo.title = 'Diğer bilgisayarlardan bu adrese bağlanabilirsiniz';
+    }
     
     // Initialize socket connection
     initSocket();

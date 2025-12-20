@@ -535,8 +535,33 @@ body {
     padding: 16px;
     border-top: 1px solid var(--border-color);
     display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sidebar-footer > div:first-child {
+    display: flex;
     justify-content: space-between;
     align-items: center;
+    width: 100%;
+}
+
+.server-info {
+    font-size: 0.7rem !important;
+    color: var(--text-muted) !important;
+    padding: 6px 8px !important;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    text-align: center;
+    word-break: break-all;
+    cursor: help;
+    border: 1px solid var(--border-color);
+}
+
+.logout-btn-wrapper {
+    width: 100%;
+    display: flex;
+    justify-content: flex-end;
 }
 
 .encryption-status {

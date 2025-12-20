@@ -63,11 +63,17 @@
             <div class="sidebar-footer">
                 <div class="encryption-status">
                     <span class="lock-icon">🔒</span>
+                    <span>E2E Şifreli</span>
                 </div>
-                <a href="{{ url_for('logout') }}" class="logout-btn">
-                    <span>Çıkış</span>
-                    <span class="logout-icon">⏻</span>
-                </a>
+                <div class="server-info" id="server-info">
+                    <span id="server-url">Yükleniyor...</span>
+                </div>
+                <div class="logout-btn-wrapper">
+                    <a href="{{ url_for('logout') }}" class="logout-btn">
+                        <span>Çıkış</span>
+                        <span class="logout-icon">⏻</span>
+                    </a>
+                </div>
             </div>
         </aside>
         
